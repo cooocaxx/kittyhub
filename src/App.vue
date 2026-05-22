@@ -1,596 +1,647 @@
-<!-- <script setup>
-import { computed, ref } from 'vue';
-import { useKittypad } from './composables/useKittypad';
-
-// 引入逻辑 Hook
-const {
-  deviceList, activeDevice, isSaving, config,
-  phyKeys, keyValues, buttonOptions,
-  requestDevice, openConfig, closeConfig, resetDefaults, saveConfig,
-  isComboActive, toggleCombo
-} = useKittypad();
-
-// Toast 状态管理 (UI层状态)
-const toast = ref({ show: false, msg: '', type: 'info' });
-const showToast = (msg, type = 'info') => {
-    toast.value = { show: true, msg, type };
-    setTimeout(() => toast.value.show = false, 3000);
-};
-
-// 状态计算
-const hasDevice = computed(() => deviceList.value.length > 0);
-const statusTitle = computed(() => !hasDevice.value ? "未检测到设备" : `发现 ${deviceList.value.length} 个 Kittypad`);
-const statusDesc = computed(() => hasDevice.value ? "请点击下方任意一个手柄进行配置" : "请连接 USB 线，并点击下方按钮搜索设备");
-
-// 包装保存函数以显示 Toast
-const handleSave = async () => {
-    try {
-        await saveConfig();
-        showToast("配置保存成功！", "success");
-    } catch (e) {
-        showToast(e.message, "error");
-    }
-};
-
-// 包装连接函数
-const handleOpen = async (device) => {
-    try {
-        await openConfig(device);
-    } catch (e) {
-        showToast(e.message, "error");
-    }
-}
-
-// 包装恢复默认
-const handleReset = () => {
-    if(confirm("确定恢复默认设置吗？(需点击保存生效)")) {
-        resetDefaults();
-        showToast("已恢复默认值", "success");
-    }
-}
-</script>
-
 <template>
-  <div class="flex flex-col h-screen relative bg-[#0f0f11] text-[#e4e4e7] font-sans selection:bg-purple-500 selection:text-white">
+  <div class="fui-ultimate-cockpit" :class="systemStateClass">
 
-    <transition name="fade">
-        <div v-if="toast.show" class="fixed top-6 left-0 right-0 z-[100] flex justify-center pointer-events-none">
-            <div class="px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 backdrop-blur-md border animate-bounce-in"
-                 :class="toast.type === 'success' ? 'bg-green-900/80 border-green-500/50 text-green-100' :
-                         toast.type === 'error' ? 'bg-red-900/80 border-red-500/50 text-red-100' :
-                         'bg-gray-800/90 border-gray-600 text-gray-100'">
-                <i :class="toast.type === 'success' ? 'ri-checkbox-circle-fill' : 'ri-information-fill'" class="text-xl"></i>
-                <span class="font-medium text-sm">{{ toast.msg }}</span>
+    <div class="global-pixel-noise"></div>
+
+    <header class="fui-top-bar" v-motion :initial="{ opacity: 0, y: -50 }"
+      :enter="{ opacity: 1, y: 0, transition: { duration: 600, ease: 'circOut' } }">
+      <div class="title-block">
+        <h1 class="huge-title">KITTY<span class="outline-text">HUB</span></h1>
+        <div class="sub-title">/// ADVANCED.CTRL.UNIT [RP2040]</div>
+      </div>
+
+      <div class="fui-tabs">
+        <button :class="['fui-tab', activeTab === 'gallery' ? 'tab-active' : '']" @click="activeTab = 'gallery'">[
+          GALLERY ]</button>
+        <button :class="['fui-tab', activeTab === 'power' ? 'tab-active' : '']" @click="activeTab = 'power'">[
+          POWER_MONITOR ]</button>
+      </div>
+
+      <div class="status-block">
+        <span class="status-dot rgb-split"></span>
+        <span class="status-text target-neon">{{ isConnected ? (isBooting ? 'INITIALIZING...' : 'SYS.ONLINE') :
+          'SYS.STANDBY' }}</span>
+      </div>
+
+      <button class="fui-btn connect-btn" :class="{ 'btn-yellow': !isConnected, 'btn-outline': isConnected }"
+        @click="isConnected ? disconnectDevice() : handleConnect()" :disabled="isBooting">
+        {{ isBooting ? 'BOOTING...' : (isConnected ? 'TERMINATE LINK' : 'INITIALIZE UPLINK') }}
+      </button>
+    </header>
+
+    <main class="fui-workspace">
+
+      <div v-show="activeTab === 'gallery'" class="bento-grid">
+
+        <section class="panel panel-left bracket-corners" v-motion :initial="{ opacity: 0, x: -60, skewX: 5 }"
+          :enter="{ opacity: 1, x: 0, skewX: 0, transition: { duration: 500, delay: 100, ease: 'easeOut' } }">
+          <div class="panel-header target-color">DIR_LISTING <span class="blink">_</span></div>
+          <div class="file-list-area">
+            <div v-if="!isConnected && !isBooting" class="empty-sys dither-dense">AWAITING LINK...</div>
+            <div v-if="isBooting" class="empty-sys glitch-text">READING FLASH...</div>
+            <div v-for="file in deviceFiles" :key="file.name" class="file-tile animate-in">
+              <div class="dither-icon target-neon-border"></div>
+              <div class="file-meta">
+                <span class="f-name">{{ file.name.replace('/', '') }}</span>
+                <span class="f-size">SIZE: {{ (file.size / 1024).toFixed(1) }}K</span>
+              </div>
+              <button
+                class="f-del"
+                :class="{ 'confirm-delete': deleteConfirmFile === file.name }"
+                @click="handleDeleteClick(file.name)">
+                {{ deleteConfirmFile === file.name ? '[?]' : '[X]' }}
+              </button>
             </div>
-        </div>
-    </transition>
-
-    <nav class="flex justify-between items-center px-8 py-6 border-b border-white/5 bg-[#0f0f11] z-10">
-        <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-900/50">
-                <i class="ri-gamepad-fill text-white"></i>
-            </div>
-            <span class="font-bold tracking-wide text-lg bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
-                Kittypad Studio
-            </span>
-        </div>
-        <div class="flex items-center gap-2">
-            <span class="bg-white/5 border border-white/10 px-3 py-1 rounded-full text-xs text-gray-400 font-mono">
-                {{ deviceList.length }} Devices Online
-            </span>
-        </div>
-    </nav>
-
-    <main class="flex-1 flex flex-col items-center justify-center relative overflow-y-auto w-full px-4">
-        <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-purple-900/20 via-transparent to-transparent opacity-50 pointer-events-none"></div>
-
-        <div class="mb-12 text-center z-10">
-            <h1 class="text-4xl font-bold mb-3 transition-colors duration-300" :class="hasDevice ? 'text-white' : 'text-gray-600'">
-                {{ statusTitle }}
-            </h1>
-            <p class="text-sm text-gray-500">{{ statusDesc }}</p>
-        </div>
-
-        <div class="w-full max-w-5xl mb-16 z-10 min-h-[160px] flex justify-center">
-            <transition-group name="list" tag="div" class="flex flex-wrap justify-center gap-8">
-                <div v-for="(device, index) in deviceList" :key="device.deviceId || index"
-                     class="group cursor-pointer relative" @click="handleOpen(device)">
-
-                    <div class="kittypad-card active flex items-center justify-between px-6">
-                        <div class="dpad-grid">
-                            <div class="btn-circle col-start-2 row-start-1"></div>
-                            <div class="btn-circle col-start-1 row-start-2"></div>
-                            <div class="btn-circle col-start-3 row-start-2"></div>
-                            <div class="btn-circle col-start-2 row-start-3"></div>
-                        </div>
-                        <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
-                            <i class="ri-bear-smile-line text-2xl text-purple-400 mb-1"></i>
-                            <span class="text-[10px] bg-black/40 px-2 py-0.5 rounded text-gray-400 font-mono border border-white/10">#{{ index + 1 }}</span>
-                        </div>
-                        <div class="flex flex-col gap-3">
-                            <div class="btn-circle flex items-center justify-center text-[10px] text-gray-500">A</div>
-                            <div class="btn-circle flex items-center justify-center text-[10px] text-gray-500">B</div>
-                        </div>
-                    </div>
-
-                    <div class="absolute inset-0 bg-black/60 rounded-[20px] opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center backdrop-blur-[2px]">
-                        <span class="bg-purple-600 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg flex items-center gap-1 transform translate-y-2 group-hover:translate-y-0 transition-transform">
-                            配置此设备 <i class="ri-settings-line"></i>
-                        </span>
-                    </div>
-                    <div class="text-center mt-3 text-sm text-gray-400 font-mono group-hover:text-purple-400 transition-colors">
-                        {{ device.productName }}
-                    </div>
-                </div>
-            </transition-group>
-
-            <div v-if="!hasDevice" class="kittypad-card opacity-20 grayscale border-dashed border-4 flex flex-col items-center justify-center gap-2">
-                 <i class="ri-search-eye-line text-3xl text-gray-500"></i>
-                 <span class="text-gray-500 font-mono text-sm">NO DEVICE</span>
-            </div>
-        </div>
-
-        <div class="z-10">
-            <button @click="requestDevice"
-                class="group bg-transparent border border-gray-700 hover:border-purple-500/50 hover:bg-purple-500/10 text-gray-300 px-8 py-3 rounded-full font-medium transition-all flex items-center gap-3">
-                <i class="ri-search-line group-hover:scale-110 transition-transform"></i>
-                <span>{{ hasDevice ? '添加新设备 / 重新授权' : '点击搜索设备' }}</span>
+          </div>
+          <div class="action-stack">
+            <button class="fui-btn btn-green full-w" @click="handleRotate" :disabled="!isConnected">>> ROTATE
+              (SROT)</button>
+            <button
+              class="fui-btn full-w"
+              :class="wipeConfirmMode ? 'btn-yellow' : 'btn-magenta'"
+              @click="handleWipeClick"
+              :disabled="!isConnected">
+              {{ wipeConfirmMode ? '>>> CONFIRM WIPE?' : '>> FORMAT FLASH' }}
             </button>
-        </div>
+          </div>
+        </section>
+
+        <section class="panel panel-center bracket-corners" v-motion :initial="{ opacity: 0, scale: 0.95, y: 20 }"
+          :enter="{ opacity: 1, scale: 1, y: 0, transition: { duration: 600, delay: 200, type: 'spring', stiffness: 100 } }">
+
+          <div v-if="!showCropModal" class="dither-upload-box" @click="triggerFileInput"
+            :class="{ disabled: !isConnected }">
+            <div class="glitch-bg-anim target-anim-bg"></div>
+            <div class="dither-pixel-mask"></div>
+            <div class="upload-scanline target-scanline"></div>
+            <div class="pixel-crosshair"></div>
+
+            <div class="idle-content bracket-corners">
+              <div class="upload-icon target-neon">▚</div>
+              <h2 class="bold-cta target-color">{{ isConnected ? 'INSERT_MEDIA_PAYLOAD' : 'SYSTEM OFFLINE' }}</h2>
+              <p class="sub-cta">{{ isConnected ? '[ CLICK TO BROWSE DIRECTORY ]' : 'AWAITING INITIALIZATION' }}</p>
+            </div>
+          </div>
+          <input type="file" ref="fileInputRef" accept="image/*" class="hidden-input" @change="handleFileSelect">
+
+          <div v-if="showCropModal" class="fui-cropper-area">
+            <!-- 上传进度条 -->
+            <div v-if="isUploading" class="upload-progress-overlay">
+              <div class="upload-progress-content">
+                <div class="upload-progress-title target-neon">TRANSMITTING DATA...</div>
+                <div class="upload-progress-bar">
+                  <div class="upload-progress-fill" :style="{ width: uploadProgress + '%' }"></div>
+                </div>
+                <div class="upload-progress-text target-yellow">{{ uploadProgress }}%</div>
+              </div>
+            </div>
+
+            <!-- GIF 预览模式：只显示图片，禁用裁剪 -->
+            <div v-if="isGifPreview && !isUploading" class="gif-preview-frame">
+              <img :src="cropUrl" class="gif-preview-img" alt="GIF Preview" />
+              <div class="gif-info target-neon">GIF ANIMATION - NO CROP</div>
+            </div>
+            <!-- 普通图片：裁剪器 -->
+            <div v-else-if="!isUploading" class="cropper-frame dither-dense">
+              <div class="hud-corner top-left"></div>
+              <div class="hud-corner top-right"></div>
+              <div class="hud-corner bottom-left"></div>
+              <div class="hud-corner bottom-right"></div>
+              <div class="fui-coord top-left-data">POS: X0 Y0</div>
+              <div class="fui-coord bottom-right-data">ROT: {{ currentRotation * 90 }}°</div>
+              <Cropper ref="cropperRef" class="vue-cropper-instance" :src="cropUrl"
+                :stencil-props="{ aspectRatio: getScreenRatio() }" />
+            </div>
+
+            <div class="cropper-actions">
+              <button v-if="!isGifPreview && !isUploading" class="fui-btn btn-outline" @click="cropRotate(90)">[ ROT +90° ]</button>
+              <button class="fui-btn btn-outline" @click="cancelCrop" :disabled="isUploading">[ ABORT ]</button>
+              <button class="fui-btn btn-yellow execute-btn" @click="confirmCrop" :disabled="isUploading">>>> {{ isGifPreview ? 'UPLOAD GIF' : 'EXECUTE CROP & UPLOAD' }}</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel panel-right bracket-corners" v-motion :initial="{ opacity: 0, x: 60, skewX: -5 }"
+          :enter="{ opacity: 1, x: 0, skewX: 0, transition: { duration: 500, delay: 300, ease: 'easeOut' } }">
+          <div class="panel-header target-color">SYS_CONFIG (CONF)</div>
+
+          <div class="config-controls">
+            <div class="c-row">
+              <label>ID_STRING</label>
+              <input type="text" class="fui-input term-input target-color" v-model="deviceConfig.name" maxlength="12"
+                :disabled="!isConnected">
+            </div>
+            <div class="c-row">
+              <label>LUMEN_OUTPUT [{{ deviceConfig.brightness }}%]</label>
+              <input type="range" class="fui-slider glitch-slider target-color" v-model.number="deviceConfig.brightness"
+                min="5" max="100" step="5" :disabled="!isConnected">
+            </div>
+            <div class="c-row radio-group">
+              <label>EXECUTION_MODE</label>
+              <div class="radio-options">
+                <label class="radio-label green-radio" :class="{ 'disabled-text': !isConnected }">
+                  <input type="checkbox" v-model="playGif" :disabled="!isConnected"> [ GIF_ONLY ]
+                </label>
+                <label class="radio-label green-radio" :class="{ 'disabled-text': !isConnected }">
+                  <input type="checkbox" v-model="playJpg" :disabled="!isConnected"> [ JPG_ONLY ]
+                </label>
+              </div>
+            </div>
+            <div class="c-row switch-row">
+              <label>AUTO_CYCLE_ROUTINE</label>
+              <label class="fui-switch yellow-switch">
+                <input type="checkbox" v-model="deviceConfig.autoRotate" :disabled="!isConnected">
+                <span class="switch-track dither-dense"></span>
+              </label>
+            </div>
+            <div class="c-row">
+              <label>DWELL_TICK [SEC]</label>
+              <input type="number" class="fui-input term-input num-input target-color"
+                v-model.number="deviceConfig.interval" min="0" max="60" :disabled="!isConnected">
+            </div>
+          </div>
+
+          <div class="flex-spacer"></div>
+          <button
+            class="fui-btn full-w"
+            :class="configConfirmMode ? 'btn-magenta' : 'btn-yellow'"
+            @click="handleConfigClick"
+            :disabled="!isConnected">
+            {{ configConfirmMode ? '>>> CONFIRM WRITE?' : '>>> WRITE TO FLASH' }}
+          </button>
+        </section>
+
+        <section class="panel panel-bottom" v-motion :initial="{ opacity: 0, y: 60 }"
+          :enter="{ opacity: 1, y: 0, transition: { duration: 600, delay: 400, type: 'spring', stiffness: 80 } }">
+          <div class="console-module terminal-module bracket-corners">
+            <div class="panel-header target-color">TERMINAL_OUT <span class="blink">_</span></div>
+            <pre class="terminal-body target-neon">{{ logText }}</pre>
+          </div>
+
+          <div class="console-module hex-module bracket-corners dither-bg-subtle">
+            <div class="panel-header target-color">SYS_STORAGE_ALLOC</div>
+            <div class="hex-content target-yellow">
+              <div v-for="(line, index) in hexLines" :key="'hex' + index" v-html="line"></div>
+            </div>
+          </div>
+
+          <div class="console-module signal-module bracket-corners">
+            <div class="panel-header target-color">
+              <span>SIGNAL_OSC [FREQ_ANALYSIS]</span>
+              <span class="status-blink" v-if="isConnected && !isBooting">[ SYNC_LOCK ]</span>
+            </div>
+
+            <div class="osc-container">
+              <div class="osc-data target-color">
+                <div class="data-row"><span>FRQ:</span> <span class="target-yellow">{{ oscData.freq }} MHz</span></div>
+                <div class="data-row"><span>AMP:</span> <span class="target-yellow">{{ oscData.amp }} dB</span></div>
+                <div class="data-row"><span>SNR:</span> <span class="target-magenta">{{ oscData.snr }} %</span></div>
+                <div class="data-row"><span>PHS:</span> <span>{{ oscData.phase }} rad</span></div>
+              </div>
+
+              <div class="osc-graph-wrapper dither-bg-subtle target-border">
+                <div class="osc-grid"></div>
+                <div class="eq-bars">
+                  <div class="eq-bar target-eq" v-for="n in 16" :key="'eq' + n"
+                    :style="{ animationDuration: (0.3 + (n % 5) * 0.2) + 's' }"></div>
+                </div>
+                <div class="osc-sweep target-scanline"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div v-show="activeTab === 'power'" class="bento-grid power-grid-layout" v-motion
+        :initial="{ opacity: 0, scale: 0.98 }" :enter="{ opacity: 1, scale: 1, transition: { duration: 400 } }">
+        <section class="panel bracket-corners power-panel">
+          <div class="panel-header target-color">TELEMETRY: POWER MONITORING</div>
+          <div class="usb-grid-horizontal">
+            <div class="usb-card dither-bg-subtle" :class="{ 'offline': !isConnected }">
+              <div class="u-name">PORT_A <span class="status target-neon">[{{ isConnected ? 'ACTIVE' : 'STANDBY'
+              }}]</span></div>
+              <div class="u-volts target-yellow">{{ isConnected ? usb1Data.voltage.toFixed(2) : '0.00' }}<span
+                  class="unit">V</span></div>
+              <div class="u-details">
+                <span class="data-block">AMP: {{ isConnected ? (usb1Data.current * 1000).toFixed(0) : '0' }}mA</span>
+                <span class="data-block target-magenta">PWR: {{ isConnected ? (usb1Data.voltage * usb1Data.current *
+                  1000).toFixed(0) : '0' }}mW</span>
+              </div>
+            </div>
+            <div class="usb-card dither-bg-subtle" :class="{ 'offline': !isConnected }">
+              <div class="u-name">PORT_B <span class="status target-neon">[{{ isConnected ? 'ACTIVE' : 'STANDBY'
+              }}]</span></div>
+              <div class="u-volts target-yellow">{{ isConnected ? usb2Data.voltage.toFixed(2) : '0.00' }}<span
+                  class="unit">V</span></div>
+              <div class="u-details">
+                <span class="data-block">AMP: {{ isConnected ? (usb2Data.current * 1000).toFixed(0) : '0' }}mA</span>
+                <span class="data-block target-magenta">PWR: {{ isConnected ? (usb2Data.voltage * usb2Data.current *
+                  1000).toFixed(0) : '0' }}mW</span>
+              </div>
+            </div>
+            <div class="usb-card dither-bg-subtle" :class="{ 'offline': !isConnected }">
+              <div class="u-name">PORT_C <span class="status target-neon">[{{ isConnected ? 'ACTIVE' : 'STANDBY'
+              }}]</span></div>
+              <div class="u-volts target-yellow">{{ isConnected ? usb3Data.voltage.toFixed(2) : '0.00' }}<span
+                  class="unit">V</span></div>
+              <div class="u-details">
+                <span class="data-block">AMP: {{ isConnected ? (usb3Data.current * 1000).toFixed(0) : '0' }}mA</span>
+                <span class="data-block target-magenta">PWR: {{ isConnected ? (usb3Data.voltage * usb3Data.current *
+                  1000).toFixed(0) : '0' }}mW</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
     </main>
 
-    <footer class="py-6 text-center text-xs text-gray-600 border-t border-white/5 bg-[#0f0f11]">
-        <p>&copy; 2026 Kittypad Studio.</p>
-    </footer>
-
-    <transition name="slide-up">
-        <div v-if="activeDevice" class="fixed inset-0 bg-[#0f0f11] z-50 flex flex-col">
-            <header class="sticky top-0 bg-[#0f0f11]/95 backdrop-blur-md p-4 border-b border-white/10 flex justify-between items-center max-w-6xl mx-auto w-full z-20 shadow-lg">
-                <button @click="closeConfig" class="text-gray-400 hover:text-white flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/5 transition">
-                    <i class="ri-arrow-left-s-line text-xl"></i> 返回列表
-                </button>
-                <div class="font-bold flex items-center gap-3 text-lg">
-                    <span class="relative flex h-3 w-3">
-                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                      <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
-                    </span>
-                    {{ activeDevice.productName }}
-                </div>
-                <div class="flex gap-3">
-                    <button @click="handleReset" class="text-gray-400 hover:text-red-400 text-sm px-4 py-2 hover:bg-white/5 rounded-lg transition flex items-center gap-1">
-                        <i class="ri-refresh-line"></i> 恢复默认
-                    </button>
-                    <button @click="handleSave" :disabled="isSaving"
-                        class="bg-white text-black px-6 py-2 rounded-lg text-sm font-bold hover:bg-gray-200 transition shadow-lg flex items-center gap-2 disabled:opacity-50">
-                        <i v-if="isSaving" class="ri-loader-4-line animate-spin"></i>
-                        {{ isSaving ? '保存中...' : '保存配置' }}
-                    </button>
-                </div>
-            </header>
-
-            <div class="flex-1 overflow-y-auto">
-                <div class="max-w-5xl mx-auto p-8 space-y-8 pb-20">
-                    <section class="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-sm">
-                        <div class="flex items-center gap-4 mb-8 border-b border-white/5 pb-4">
-                            <div class="w-12 h-12 rounded-2xl bg-blue-500/20 text-blue-400 flex items-center justify-center text-2xl">
-                                <i class="ri-keyboard-box-line"></i>
-                            </div>
-                            <div>
-                                <h2 class="text-xl font-bold text-white">基础按键映射 (Single Map)</h2>
-                                <p class="text-sm text-gray-500">自定义物理按键的基础功能。设为默认则保留摇杆特性。</p>
-                            </div>
-                        </div>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-
-                            <div v-for="(keyName, idx) in phyKeys" :key="idx"
-                                class="bg-black/30 rounded-xl p-4 border border-white/5 hover:border-blue-500/50 transition-all group">
-
-                                <label class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex justify-between">
-                                    {{ keyName }}
-                                    <span class="text-[10px] bg-white/10 px-1.5 rounded text-gray-500 group-hover:text-blue-400 transition-colors">
-                                        KEY {{ idx + 1 }}
-                                    </span>
-                                </label>
-
-                                <div class="relative">
-                                    <select v-model="config.singleMap[idx]"
-                                            class="w-full bg-[#18181b] text-gray-200 text-sm rounded-lg pl-3 pr-8 py-3 outline-none border border-gray-700 focus:border-blue-500 appearance-none cursor-pointer hover:bg-[#202025] transition-colors text-ellipsis overflow-hidden">
-                                        <option v-for="opt in buttonOptions" :value="opt.val">{{ opt.name }}</option>
-                                    </select>
-                                    <i class="ri-arrow-down-s-line absolute right-3 top-3.5 text-gray-500 pointer-events-none"></i>
-                                </div>
-
-                            </div>
-                        </div>
-
-                    </section>
-
-                    <section class="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-sm">
-                        <div class="flex items-center gap-4 mb-8 border-b border-white/5 pb-4">
-                            <div class="w-12 h-12 rounded-2xl bg-purple-500/20 text-purple-400 flex items-center justify-center text-2xl">
-                                <i class="ri-flashlight-line"></i>
-                            </div>
-                            <div>
-                                <h2 class="text-xl font-bold text-white">Magic Combo (组合键)</h2>
-                                <p class="text-sm text-gray-500">按下特定物理组合时触发。优先级高于基础映射。</p>
-                            </div>
-                        </div>
-                        <div class="grid gap-4">
-                            <div v-for="(combo, cIdx) in config.combos" :key="cIdx"
-                                 class="bg-black/30 rounded-2xl p-6 border border-white/5 flex flex-col md:flex-row gap-6 items-center hover:border-purple-500/30 transition-colors">
-                                <div class="w-24 shrink-0 text-center md:text-left">
-                                    <span class="text-xs font-bold text-purple-400 bg-purple-900/20 px-3 py-1 rounded-full border border-purple-500/20">RULE #{{cIdx + 1}}</span>
-                                </div>
-                                <div class="flex-1 flex flex-col items-center md:items-start">
-                                    <p class="text-[10px] text-gray-500 mb-2 font-mono uppercase tracking-widest">Trigger Keys</p>
-                                    <div class="flex flex-wrap gap-2 justify-center">
-                                        <button v-for="(kName, kIdx) in phyKeys" :key="kIdx"
-                                                @click="toggleCombo(cIdx, keyValues[kIdx])"
-                                                class="px-3 py-1.5 rounded-full text-xs font-bold border transition-all duration-200 flex items-center gap-1.5"
-                                                :class="isComboActive(cIdx, keyValues[kIdx])
-                                                    ? 'bg-purple-600 border-purple-500 text-white shadow-[0_0_12px_rgba(147,51,234,0.4)] scale-105'
-                                                    : 'bg-transparent border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'">
-                                            <i class="ri-add-line" v-if="isComboActive(cIdx, keyValues[kIdx])"></i>
-                                            {{ kName }}
-                                        </button>
-                                    </div>
-                                </div>
-                                <i class="ri-arrow-right-line text-2xl text-gray-600 hidden md:block"></i>
-                                <div class="w-full md:w-64">
-                                    <p class="text-[10px] text-gray-500 mb-2 font-mono uppercase tracking-widest">Output Action</p>
-                                    <div class="relative">
-                                        <select v-model="combo.dstBtn"
-                                                class="w-full bg-[#18181b] text-white text-sm rounded-lg pl-3 pr-8 py-2.5 outline-none border border-gray-700 focus:border-purple-500 appearance-none cursor-pointer">
-                                            <option v-for="opt in buttonOptions" :value="opt.val">{{ opt.name }}</option>
-                                        </select>
-                                        <i class="ri-arrow-down-s-line absolute right-3 top-3 text-gray-500 pointer-events-none"></i>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-                </div>
-            </div>
-        </div>
-    </transition>
-  </div>
-</template>
-
-<style scoped>
-/* Scoped styles that Tailwind can't easily handle or Component-specific CSS */
-.kittypad-card {
-    width: 210px; height: 130px;
-    background: #27272a; border-radius: 20px; border: 2px solid #3f3f46;
-    box-shadow: 0 20px 40px -10px rgba(0,0,0,0.5), inset 0 2px 4px rgba(255,255,255,0.1);
-    position: relative; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.kittypad-card.active {
-    border-color: #8b5cf6; background: #1e1e24;
-    box-shadow: 0 0 25px rgba(139, 92, 246, 0.15), inset 0 0 15px rgba(139, 92, 246, 0.1);
-}
-.kittypad-card:hover { transform: translateY(-5px); border-color: #a78bfa; }
-
-.btn-circle {
-    width: 28px; height: 28px; border-radius: 50%;
-    background: #18181b; border: 1px solid #3f3f46;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-}
-.kittypad-card.active .btn-circle { background: #2e1065; border-color: #5b21b6; }
-.dpad-grid { display: grid; grid-template-columns: repeat(3, 28px); grid-template-rows: repeat(3, 28px); gap: 2px; }
-
-/* Vue Transitions */
-.fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
-
-.slide-up-enter-active, .slide-up-leave-active { transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
-.slide-up-enter-from, .slide-up-leave-to { transform: translateY(100%); opacity: 0; }
-
-.list-enter-active, .list-leave-active { transition: all 0.4s ease; }
-.list-enter-from, .list-leave-to { opacity: 0; transform: translateY(20px); }
-</style> -->
-
-
-<script setup>
-import { computed, ref } from 'vue';
-import { useKittypad } from './composables/useKittypad';
-
-const {
-  deviceList, activeDevice, isSaving, config,
-  phyKeys, keyValues, buttonOptions,
-  requestDevice, openConfig, closeConfig, resetDefaults, saveConfig,
-  isComboActive, toggleCombo
-} = useKittypad();
-
-const toast = ref({ show: false, msg: '', type: 'info' });
-const showToast = (msg, type = 'info') => {
-    toast.value = { show: true, msg, type };
-    setTimeout(() => toast.value.show = false, 3000);
-};
-
-const hasDevice = computed(() => deviceList.value.length > 0);
-const statusTitle = computed(() => !hasDevice.value ? "等待设备连接" : `已就绪`);
-const statusDesc = computed(() => hasDevice.value ? `发现 ${deviceList.value.length} 个 Kittypad，请选择进行配置` : "系统正在扫描 USB 端口...");
-
-const handleSave = async () => {
-    try { await saveConfig(); showToast("配置保存成功！", "success"); }
-    catch (e) { showToast(e.message, "error"); }
-};
-const handleOpen = async (device) => {
-    try { await openConfig(device); }
-    catch (e) { showToast(e.message, "error"); }
-}
-const handleReset = () => {
-    if(confirm("确定恢复默认设置吗？(需点击保存生效)")) {
-        resetDefaults();
-        showToast("已恢复默认值", "success");
-    }
-}
-</script>
-
-<template>
-  <div class="flex flex-col h-screen relative bg-[#0f0f11] text-[#e4e4e7] font-sans selection:bg-purple-500 selection:text-white overflow-hidden">
-
-    <div class="fixed inset-0 pointer-events-none overflow-hidden">
-        <div class="absolute top-[-10%] left-[-10%] w-96 h-96 bg-purple-600/20 rounded-full mix-blend-screen filter blur-3xl opacity-30 animate-blob"></div>
-        <div class="absolute top-[-10%] right-[-10%] w-96 h-96 bg-blue-600/20 rounded-full mix-blend-screen filter blur-3xl opacity-30 animate-blob animation-delay-2000"></div>
-        <div class="absolute -bottom-32 left-1/3 w-96 h-96 bg-pink-600/20 rounded-full mix-blend-screen filter blur-3xl opacity-30 animate-blob animation-delay-4000"></div>
+    <div class="fui-marquee" :class="{ 'marquee-offline': !isConnected }">
+      <div class="marquee-track target-marquee-anim">
+        <span>// KITTYHUB_CORE_V1.0.4 {{ isConnected ? 'ACTIVE' : 'STANDBY' }} // SYSTEM_TELEMETRY_{{ isConnected ?
+          'ONLINE' : 'OFFLINE' }} // AWAITING_COMMAND // 0x3F8A2B_MEM_CLEAR // SENSOR_ARRAY_{{ isConnected ? 'NOMINAL' :
+            'SLEEP' }} //</span>
+        <span>// KITTYHUB_CORE_V1.0.4 {{ isConnected ? 'ACTIVE' : 'STANDBY' }} // SYSTEM_TELEMETRY_{{ isConnected ?
+          'ONLINE' : 'OFFLINE' }} // AWAITING_COMMAND // 0x3F8A2B_MEM_CLEAR // SENSOR_ARRAY_{{ isConnected ? 'NOMINAL' :
+            'SLEEP' }} //</span>
+      </div>
     </div>
-
-    <transition name="fade">
-        <div v-if="toast.show" class="fixed top-6 left-0 right-0 z-[100] flex justify-center pointer-events-none">
-            <div class="px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 backdrop-blur-md border animate-bounce-in"
-                 :class="toast.type === 'success' ? 'bg-green-900/80 border-green-500/50 text-green-100' :
-                         toast.type === 'error' ? 'bg-red-900/80 border-red-500/50 text-red-100' :
-                         'bg-gray-800/90 border-gray-600 text-gray-100'">
-                <i :class="toast.type === 'success' ? 'ri-checkbox-circle-fill' : 'ri-information-fill'" class="text-xl"></i>
-                <span class="font-medium text-sm">{{ toast.msg }}</span>
-            </div>
-        </div>
-    </transition>
-
-    <nav class="flex justify-between items-center px-8 py-6 border-b border-white/5 bg-[#0f0f11]/50 backdrop-blur-md z-10 sticky top-0">
-        <div class="flex items-center gap-3 group cursor-default">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-900/20 group-hover:shadow-purple-500/50 transition-all duration-500">
-                <i class="ri-gamepad-fill text-white text-xl"></i>
-            </div>
-            <div>
-                <h1 class="font-bold tracking-wide text-lg leading-tight">Kittypad Studio</h1>
-                <div class="text-[10px] text-gray-500 font-mono tracking-wider">PRO CONFIGURATOR</div>
-            </div>
-        </div>
-        <div class="flex items-center gap-2">
-            <span class="bg-white/5 border border-white/10 px-3 py-1 rounded-full text-xs text-gray-400 font-mono flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full" :class="hasDevice ? 'bg-green-500 animate-pulse' : 'bg-gray-600'"></span>
-                {{ deviceList.length }} Devices Online
-            </span>
-        </div>
-    </nav>
-
-    <main class="flex-1 flex flex-col items-center justify-center relative overflow-y-auto w-full px-4 z-10 custom-scrollbar">
-
-        <div class="mb-12 text-center animate-float">
-            <h1 class="text-4xl font-bold mb-3 transition-colors duration-300 drop-shadow-lg" :class="hasDevice ? 'text-white' : 'text-gray-500'">
-                {{ statusTitle }}
-            </h1>
-            <p class="text-sm text-gray-500">{{ statusDesc }}</p>
-        </div>
-
-        <div class="w-full max-w-5xl mb-16 min-h-[160px] flex justify-center">
-            <transition-group name="list" tag="div" class="flex flex-wrap justify-center gap-10">
-
-                <div v-for="(device, index) in deviceList" :key="device.deviceId || index"
-                     class="group cursor-pointer relative" @click="handleOpen(device)">
-
-                    <div class="kittypad-card active flex items-center justify-between px-6 transform transition-all duration-300 group-hover:scale-105 group-hover:shadow-[0_0_40px_rgba(139,92,246,0.3)] group-hover:border-purple-400/50">
-                        <div class="dpad-grid">
-                            <div class="btn-circle col-start-2 row-start-1 group-hover:bg-purple-900 transition-colors"></div>
-                            <div class="btn-circle col-start-1 row-start-2 group-hover:bg-purple-900 transition-colors"></div>
-                            <div class="btn-circle col-start-3 row-start-2 group-hover:bg-purple-900 transition-colors"></div>
-                            <div class="btn-circle col-start-2 row-start-3 group-hover:bg-purple-900 transition-colors"></div>
-                        </div>
-                        <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
-                            <i class="ri-bear-smile-line text-2xl text-purple-400 mb-1 group-hover:scale-110 transition-transform"></i>
-                            <span class="text-[10px] bg-black/40 px-2 py-0.5 rounded text-gray-400 font-mono border border-white/10">#{{ index + 1 }}</span>
-                        </div>
-                        <div class="flex flex-col gap-3">
-                            <div class="btn-circle flex items-center justify-center text-[10px] text-gray-500 group-hover:text-purple-300 group-hover:border-purple-500 transition-colors">A</div>
-                            <div class="btn-circle flex items-center justify-center text-[10px] text-gray-500 group-hover:text-purple-300 group-hover:border-purple-500 transition-colors">B</div>
-                        </div>
-                    </div>
-
-                    <div class="text-center mt-4 text-sm text-gray-500 font-mono group-hover:text-white transition-colors">
-                        {{ device.productName }}
-                    </div>
-                </div>
-            </transition-group>
-
-            <div v-if="!hasDevice" class="kittypad-card flex flex-col items-center justify-center relative  group">
-                 <div class="absolute inset-0 bg-purple-500/5 animate-ping-slow pointer-events-none"></div>
-                 <div class="absolute inset-0 bg-purple-500/5 animate-pulse pointer-events-none"></div>
-
-                 <div class="relative flex flex-col items-center gap-2 z-10 opacity-60 group-hover:opacity-100 transition-opacity">
-                     <i class="ri-search-eye-line text-3xl text-gray-500 group-hover:text-purple-400 transition-colors"></i>
-                     <span class="text-gray-500 font-mono text-sm group-hover:text-gray-300 transition-colors">NO DEVICE</span>
-                 </div>
-            </div>
-        </div>
-
-        <div>
-            <button @click="requestDevice"
-                class="group relative bg-white/5 hover:bg-white/10 border border-white/10 hover:border-purple-500/50 text-gray-300 px-10 py-3 rounded-full font-medium transition-all overflow-hidden">
-                <div class="absolute inset-0 bg-gradient-to-r from-transparent via-purple-500/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
-
-                <div class="relative flex items-center gap-3">
-                  <i class="ri-search-line group-hover:scale-110 transition-transform"></i>
-                  <span>{{ hasDevice ? '添加新设备 / 重新授权' : '点击搜索设备' }}</span>
-                </div>
-            </button>
-        </div>
-    </main>
-
-    <footer class="py-6 text-center text-xs text-gray-600 border-t border-white/5 bg-[#0f0f11]/50 backdrop-blur-md z-10">
-        <p>&copy; 2026 Kittypad Studio.</p>
-    </footer>
-
-    <transition name="slide-up">
-        <div v-if="activeDevice" class="fixed inset-0 bg-[#0f0f11] z-50 flex flex-col">
-            <header class="sticky top-0 bg-[#0f0f11]/95 backdrop-blur-md p-4 border-b border-white/10 flex justify-between items-center max-w-6xl mx-auto w-full z-20 shadow-lg">
-                <button @click="closeConfig" class="text-gray-400 hover:text-white flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/5 transition">
-                    <i class="ri-arrow-left-s-line text-xl"></i> <span class="hidden sm:inline">返回列表</span>
-                </button>
-                <div class="font-bold flex items-center gap-3 text-lg">
-                    <span class="relative flex h-3 w-3">
-                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                      <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
-                    </span>
-                    {{ activeDevice.productName }}
-                </div>
-                <div class="flex gap-3">
-                    <button @click="handleReset" class="text-gray-400 hover:text-red-400 text-sm px-4 py-2 hover:bg-white/5 rounded-lg transition flex items-center gap-1">
-                        <i class="ri-refresh-line"></i> <span class="hidden sm:inline">恢复默认</span>
-                    </button>
-                    <button @click="handleSave" :disabled="isSaving"
-                        class="bg-white text-black px-6 py-2 rounded-lg text-sm font-bold hover:bg-gray-200 transition shadow-lg flex items-center gap-2 disabled:opacity-50 hover:scale-105 active:scale-95">
-                        <i v-if="isSaving" class="ri-loader-4-line animate-spin"></i>
-                        {{ isSaving ? '保存中...' : '保存配置' }}
-                    </button>
-                </div>
-            </header>
-
-            <div class="flex-1 overflow-y-auto custom-scrollbar">
-                <div class="max-w-5xl mx-auto p-8 space-y-8 pb-20">
-                    <section class="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-sm shadow-xl">
-                        <div class="flex items-center gap-4 mb-8 border-b border-white/5 pb-4">
-                            <div class="w-12 h-12 rounded-2xl bg-blue-500/20 text-blue-400 flex items-center justify-center text-2xl">
-                                <i class="ri-keyboard-box-line"></i>
-                            </div>
-                            <div>
-                                <h2 class="text-xl font-bold text-white">基础按键映射 (Single Map)</h2>
-                                <p class="text-sm text-gray-500">自定义物理按键的基础功能。设为默认则保留摇杆特性。</p>
-                            </div>
-                        </div>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                            <div v-for="(keyName, idx) in phyKeys" :key="idx"
-                                 class="bg-black/30 rounded-xl p-4 border border-white/5 hover:border-blue-500/50 transition-all group hover:bg-white/5">
-                                <label class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex justify-between">
-                                    {{ keyName }}
-                                    <span class="text-[10px] bg-white/10 px-1.5 rounded text-gray-500 group-hover:text-blue-400 transition-colors">KEY {{idx+1}}</span>
-                                </label>
-                                <div class="relative">
-                                    <select v-model="config.singleMap[idx]"
-                                            class="w-full bg-[#18181b] text-gray-200 text-sm rounded-lg pl-3 pr-8 py-3 outline-none border border-gray-700 focus:border-blue-500 appearance-none cursor-pointer hover:bg-[#202025] transition-colors text-ellipsis overflow-hidden">
-                                        <option v-for="opt in buttonOptions" :value="opt.val">{{ opt.name }}</option>
-                                    </select>
-                                    <i class="ri-arrow-down-s-line absolute right-3 top-3.5 text-gray-500 pointer-events-none"></i>
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-sm shadow-xl">
-                        <div class="flex items-center gap-4 mb-8 border-b border-white/5 pb-4">
-                            <div class="w-12 h-12 rounded-2xl bg-purple-500/20 text-purple-400 flex items-center justify-center text-2xl">
-                                <i class="ri-flashlight-line"></i>
-                            </div>
-                            <div>
-                                <h2 class="text-xl font-bold text-white">Magic Combo (组合键)</h2>
-                                <p class="text-sm text-gray-500">按下特定物理组合时触发。优先级高于基础映射。</p>
-                            </div>
-                        </div>
-                        <div class="grid gap-4">
-                            <div v-for="(combo, cIdx) in config.combos" :key="cIdx"
-                                 class="bg-black/30 rounded-2xl p-6 border border-white/5 flex flex-col md:flex-row gap-6 items-center hover:border-purple-500/30 transition-all hover:bg-white/5">
-                                <div class="w-24 shrink-0 text-center md:text-left">
-                                    <span class="text-xs font-bold text-purple-400 bg-purple-900/20 px-3 py-1 rounded-full border border-purple-500/20">RULE #{{cIdx + 1}}</span>
-                                </div>
-                                <div class="flex-1 flex flex-col items-center md:items-start">
-                                    <p class="text-[10px] text-gray-500 mb-2 font-mono uppercase tracking-widest">Trigger Keys</p>
-                                    <div class="flex flex-wrap gap-2 justify-center">
-                                        <button v-for="(kName, kIdx) in phyKeys" :key="kIdx"
-                                                @click="toggleCombo(cIdx, keyValues[kIdx])"
-                                                class="px-3 py-1.5 rounded-full text-xs font-bold border transition-all duration-200 flex items-center gap-1.5"
-                                                :class="isComboActive(cIdx, keyValues[kIdx])
-                                                    ? 'bg-purple-600 border-purple-500 text-white shadow-[0_0_15px_rgba(147,51,234,0.5)] scale-105'
-                                                    : 'bg-transparent border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'">
-                                            <i class="ri-add-line" v-if="isComboActive(cIdx, keyValues[kIdx])"></i>
-                                            {{ kName }}
-                                        </button>
-                                    </div>
-                                </div>
-                                <i class="ri-arrow-right-line text-2xl text-gray-600 hidden md:block"></i>
-                                <i class="ri-arrow-down-line text-2xl text-gray-600 md:hidden"></i>
-                                <div class="w-full md:w-64">
-                                    <p class="text-[10px] text-gray-500 mb-2 font-mono uppercase tracking-widest">Output Action</p>
-                                    <div class="relative">
-                                        <select v-model="combo.dstBtn"
-                                                class="w-full bg-[#18181b] text-white text-sm rounded-lg pl-3 pr-8 py-2.5 outline-none border border-gray-700 focus:border-purple-500 appearance-none cursor-pointer hover:bg-[#202025]">
-                                            <option v-for="opt in buttonOptions" :value="opt.val">{{ opt.name }}</option>
-                                        </select>
-                                        <i class="ri-arrow-down-s-line absolute right-3 top-3 text-gray-500 pointer-events-none"></i>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-                </div>
-            </div>
-        </div>
-    </transition>
   </div>
 </template>
+<script setup>
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue';
+import { useSerial } from './composables/useSerial';
+import { Cropper } from 'vue-advanced-cropper';
+import 'vue-advanced-cropper/dist/style.css';
+import './assets/fui-cockpit.css';
 
-<style>
-/* 🔥 关键修改：移除 scoped，确保滚动条样式生效 */
-.animation-delay-2000 { animation-delay: 2s; }
-.animation-delay-4000 { animation-delay: 4s; }
+const {
+  isConnected, logText, isUploading, uploadProgress,
+  deviceFiles, deviceConfig, storageInfo,
+  connectDevice, disconnectDevice, sendCommand
+} = useSerial();
 
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #52525b; }
-</style>
+const activeTab = ref('gallery');
+const isBooting = ref(false);
+const currentRotation = ref(1);
+const showCropModal = ref(false);
+const cropUrl = ref('');
+const fileInputRef = ref(null);
+const isGifPreview = ref(false);  // GIF 预览模式（禁用裁剪）
+const gifData = ref(null);        // GIF 文件数据
+const configConfirmMode = ref(false); // 配置确认模式
+let configConfirmTimer = null;    // 确认模式超时计时器
+const wipeConfirmMode = ref(false);   // 格式化确认模式
+let wipeConfirmTimer = null;      // 格式化确认超时计时器
+const deleteConfirmFile = ref('');    // 待删除的文件名
+let deleteConfirmTimer = null;    // 删除确认超时计时器
+
+const systemStateClass = computed(() => {
+  if (isBooting.value) return 'sys-booting';
+  if (isConnected.value) return 'sys-online';
+  return 'sys-offline';
+});
+
+// 播放模式多选控制：两个都选 = mixed，只选一个 = gif_only/jpg_only
+const playGif = computed({
+  get: () => deviceConfig.value.playMode === 'mixed' || deviceConfig.value.playMode === 'gif_only',
+  set: (val) => {
+    if (val && deviceConfig.value.playMode === 'jpg_only') {
+      deviceConfig.value.playMode = 'mixed';
+    } else if (val) {
+      deviceConfig.value.playMode = 'gif_only';
+    } else if (deviceConfig.value.playMode === 'mixed') {
+      deviceConfig.value.playMode = 'jpg_only';
+    } else {
+      deviceConfig.value.playMode = 'jpg_only';
+    }
+  }
+});
+
+const playJpg = computed({
+  get: () => deviceConfig.value.playMode === 'mixed' || deviceConfig.value.playMode === 'jpg_only',
+  set: (val) => {
+    if (val && deviceConfig.value.playMode === 'gif_only') {
+      deviceConfig.value.playMode = 'mixed';
+    } else if (val) {
+      deviceConfig.value.playMode = 'jpg_only';
+    } else if (deviceConfig.value.playMode === 'mixed') {
+      deviceConfig.value.playMode = 'gif_only';
+    } else {
+      deviceConfig.value.playMode = 'gif_only';
+    }
+  }
+});
+
+
+// ================= 具有真实硬件映射的 Hex 动画生成器 =================
+const hexLines = ref(['', '', '', '']);
+let hexTimer = null;
+
+const updateHexData = () => {
+  if (isConnected.value && !isBooting.value) {
+    // 提取真实的硬件存储数据
+    const total = storageInfo.value.total.toFixed(1);
+    const free = storageInfo.value.free.toFixed(1);
+    const used = (storageInfo.value.total - storageInfo.value.free).toFixed(1);
+    const pct = storageInfo.value.percent || 0;
+
+    // 生成 FUI 风格的 ASCII 物理进度条 [██████------]
+    const barLen = 12;
+    const filled = Math.round((pct / 100) * barLen);
+    const bar = '█'.repeat(filled) + '-'.repeat(barLen - filled);
+
+    // 进度条颜色：空间超过 85% 变洋红警告，否则正常霓虹绿
+    const barColor = pct > 85 ? 'var(--magenta)' : 'var(--green)';
+
+    // 尾部保留一个高速闪烁的随机 Hex 字节，维持数据流动的机械感
+    const randHex = () => Math.floor(Math.random() * 255).toString(16).padStart(2, '0').toUpperCase();
+
+    hexLines.value = [
+      `0x1A00  VOL_CAP : ${total.padStart(7, ' ')} KB  <span class="glitch-hex">${randHex()}</span>`,
+      `0x1A04  IN_USE  : ${used.padStart(7, ' ')} KB  <span class="glitch-hex">${randHex()}</span>`,
+      `0x1A08  AVAIL   : ${free.padStart(7, ' ')} KB  <span class="glitch-hex">${randHex()}</span>`,
+      `0x1A0C  [<span style="color: ${barColor}; text-shadow: 0 0 5px ${barColor}">${bar}</span>] ${pct.toFixed(1).padStart(5, ' ')}%`
+    ];
+  } else if (!isConnected.value) {
+    // 离线死寂态
+    hexLines.value = [
+      '0x0000  VOL_CAP : ------- KB  00',
+      '0x0004  IN_USE  : ------- KB  00',
+      '0x0008  AVAIL   : ------- KB  00',
+      '0x000C  [------------]   0.0%'
+    ];
+  } else if (isBooting.value) {
+    // 启动时的乱码装载态
+    hexLines.value = [
+      '0x####  SCANNING SECTORS...   FF',
+      '0x####  CALCULATING CHECKSUM  8A',
+      '0x####  MOUNTING VOLUMES...   3C',
+      '0x####  [████████████] 100.0%'
+    ];
+  }
+};
+
+onMounted(() => {
+  hexTimer = setInterval(() => {
+    updateHexData();
+    updateOscData();
+  }, 100);
+});
+
+onUnmounted(() => {
+  clearInterval(hexTimer);
+  if (powerUpdateTimer) {
+    clearInterval(powerUpdateTimer);
+    powerUpdateTimer = null;
+  }
+});
+
+
+const handleConnect = async () => {
+  if (!isConnected.value) {
+    isBooting.value = true;
+    await connectDevice();
+    setTimeout(async () => {
+      isBooting.value = false;
+      await sendCommand("GETC");
+      setTimeout(() => sendCommand("LIST"), 200);
+    }, 1500);
+  }
+};
+
+const saveConfig = async () => {
+  if (!isConnected.value) return;
+  configConfirmMode.value = false; // 重置确认模式
+  try {
+    const configData = {
+      name: deviceConfig.value.name,
+      brightness: deviceConfig.value.brightness,
+      playMode: deviceConfig.value.playMode,
+      interval: deviceConfig.value.interval,
+      autoRotate: deviceConfig.value.autoRotate,
+    };
+    const jsonString = JSON.stringify(configData);
+    console.log('[CONFIG] 发送配置:', configData);
+    console.log('[CONFIG] JSON:', jsonString);
+    await sendCommand("CONF", 0, new TextEncoder().encode(jsonString));
+  } catch (err) {
+    console.error('[CONFIG] 保存失败:', err);
+  }
+};
+
+const handleConfigClick = () => {
+  if (configConfirmMode.value) {
+    // 第二次点击：执行保存
+    if (configConfirmTimer) {
+      clearTimeout(configConfirmTimer);
+      configConfirmTimer = null;
+    }
+    saveConfig();
+  } else {
+    // 第一次点击：进入确认模式
+    configConfirmMode.value = true;
+    configConfirmTimer = setTimeout(() => {
+      configConfirmMode.value = false;
+    }, 3000); // 3秒后自动取消
+  }
+};
+
+const handleRotate = async () => {
+  if (!isConnected.value) return;
+  try {
+    currentRotation.value = (currentRotation.value + 1) % 4;
+    await sendCommand("SROT", currentRotation.value);
+  } catch (err) {
+    console.error('[ROTATE] 旋转命令失败:', err);
+  }
+};
+
+const handleWipe = async () => {
+  if (!isConnected.value) return;
+  wipeConfirmMode.value = false;
+  try {
+    await sendCommand("WIPE", 0);
+    setTimeout(() => sendCommand("LIST"), 100);
+  } catch (err) {
+    console.error('[WIPE] 格式化失败:', err);
+  }
+};
+
+const handleWipeClick = () => {
+  if (wipeConfirmMode.value) {
+    // 第二次点击：执行格式化
+    if (wipeConfirmTimer) {
+      clearTimeout(wipeConfirmTimer);
+      wipeConfirmTimer = null;
+    }
+    handleWipe();
+  } else {
+    // 第一次点击：进入确认模式
+    wipeConfirmMode.value = true;
+    wipeConfirmTimer = setTimeout(() => {
+      wipeConfirmMode.value = false;
+    }, 3000);
+  }
+};
+
+const triggerFileInput = () => { if (!isConnected.value) return; fileInputRef.value.click(); };
+const getScreenRatio = () => (currentRotation.value === 1 || currentRotation.value === 3) ? 320 / 170 : 170 / 320;
+
+const handleFileSelect = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  // 释放之前的 blob URL
+  if (cropUrl.value) {
+    URL.revokeObjectURL(cropUrl.value);
+  }
+
+  cropUrl.value = URL.createObjectURL(file);
+  showCropModal.value = true;
+
+  // GIF 文件：预览但不裁剪
+  if (file.type === 'image/gif') {
+    const arrayBuffer = await file.arrayBuffer().catch(() => null);
+    if (!arrayBuffer) {
+      alert('无法读取 GIF 文件');
+      cancelCrop();
+      if (fileInputRef.value) fileInputRef.value.value = "";
+      return;
+    }
+    isGifPreview.value = true;
+    gifData.value = new Uint8Array(arrayBuffer);
+  } else {
+    isGifPreview.value = false;
+    gifData.value = null;
+  }
+
+  if (fileInputRef.value) fileInputRef.value.value = "";
+};
+
+const cropperRef = ref(null);
+const cropRotate = (angle) => cropperRef.value?.rotate(angle);
+const cancelCrop = () => {
+  // 释放资源
+  if (cropUrl.value) {
+    URL.revokeObjectURL(cropUrl.value);
+    cropUrl.value = '';
+  }
+  gifData.value = null;
+  isGifPreview.value = false;
+  showCropModal.value = false;
+};
+
+const confirmCrop = async () => {
+  // GIF 模式：直接上传
+  if (isGifPreview.value && gifData.value) {
+    try {
+      await sendCommand("ANIM", 0, gifData.value);
+      cancelCrop();
+      setTimeout(() => sendCommand("LIST"), 200);
+    } catch (err) {
+      console.error('[GIF UPLOAD] 上传失败:', err);
+    }
+    return;
+  }
+
+  // JPEG 模式：裁剪后上传
+  if (!cropperRef.value) return;
+  try {
+    const { canvas } = cropperRef.value.getResult();
+    const { w, h } = (currentRotation.value === 1 || currentRotation.value === 3) ? { w: 320, h: 170 } : { w: 170, h: 320 };
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = w; finalCanvas.height = h;
+    const ctx = finalCanvas.getContext('2d');
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(canvas, 0, 0, w, h);
+
+    finalCanvas.toBlob(async (blob) => {
+      if (blob) {
+        try {
+          await sendCommand("JPEG", 0, new Uint8Array(await blob.arrayBuffer()));
+          cancelCrop();
+          setTimeout(() => sendCommand("LIST"), 200);
+        } catch (err) {
+          console.error('[UPLOAD] 上传失败:', err);
+        }
+      }
+    }, 'image/jpeg', 0.95);
+  } catch (err) {
+    console.error('[CROP] 裁剪失败:', err);
+  }
+};
+
+const handleDeleteClick = (fileName) => {
+  if (deleteConfirmFile.value === fileName) {
+    // 第二次点击：执行删除
+    if (deleteConfirmTimer) {
+      clearTimeout(deleteConfirmTimer);
+      deleteConfirmTimer = null;
+    }
+    deleteConfirmFile.value = '';
+    performDelete(fileName);
+  } else {
+    // 第一次点击：进入确认模式
+    if (deleteConfirmTimer) {
+      clearTimeout(deleteConfirmTimer);
+    }
+    deleteConfirmFile.value = fileName;
+    deleteConfirmTimer = setTimeout(() => {
+      deleteConfirmFile.value = '';
+    }, 3000);
+  }
+};
+
+const performDelete = async (fileName) => {
+  if (!isConnected.value) return;
+  try {
+    await sendCommand("DELF", 0, new TextEncoder().encode(fileName));
+    setTimeout(() => sendCommand("LIST"), 500);
+  } catch (err) {
+    console.error('[DELETE] 删除失败:', err);
+  }
+};
+
+// 三端口电源数据
+const usb1Data = ref({ voltage: 5.08, current: 0.85 });
+const usb2Data = ref({ voltage: 5.05, current: 0.42 });
+const usb3Data = ref({ voltage: 5.12, current: 0.15 });
+
+let powerUpdateTimer = null;
+const updatePowerData = () => {
+  if (isConnected.value) {
+    usb1Data.value = { voltage: 5.08 + Math.random() * 0.15, current: 0.85 + Math.random() * 0.2 };
+    usb2Data.value = { voltage: 5.05 + Math.random() * 0.12, current: 0.42 + Math.random() * 0.15 };
+    usb3Data.value = { voltage: 5.12 + Math.random() * 0.10, current: 0.15 + Math.random() * 0.08 };
+  }
+};
+watch(activeTab, (newTab) => {
+  if (newTab === 'power') { powerUpdateTimer = setInterval(updatePowerData, 100); }
+  else if (powerUpdateTimer) { clearInterval(powerUpdateTimer); powerUpdateTimer = null; }
+});
+
+
+
+// ================= 波形与射频动画生成器 =================
+const oscData = ref({ freq: '000.00', amp: '00.0', snr: '00.0', phase: '0.00' });
+
+const updateOscData = () => {
+  if (isConnected.value && !isBooting.value) {
+    // 在线时疯狂跳动
+    oscData.value = {
+      freq: (144 + Math.random() * 2).toFixed(2),
+      amp: (-15 + Math.random() * 5).toFixed(1),
+      snr: (95 + Math.random() * 4).toFixed(1),
+      phase: (Math.random() * 3.14).toFixed(2)
+    };
+  } else {
+    // 离线时数据归零死寂
+    oscData.value = { freq: '000.00', amp: '00.0', snr: '00.0', phase: '0.00' };
+  }
+};
+
+</script>
 
 <style scoped>
-/* 局部组件样式 */
-.kittypad-card {
-    width: 210px; height: 130px;
-    background: #27272a; border-radius: 20px; border: 2px solid #3f3f46;
-    box-shadow: 0 20px 40px -10px rgba(0,0,0,0.5), inset 0 2px 4px rgba(255,255,255,0.1);
-    position: relative;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.kittypad-card.active {
-    border-color: #8b5cf6; background: #1e1e24;
-    box-shadow: 0 0 25px rgba(139, 92, 246, 0.15), inset 0 0 15px rgba(139, 92, 246, 0.1);
-}
-
-.btn-circle {
-    width: 28px; height: 28px; border-radius: 50%;
-    background: #18181b; border: 1px solid #3f3f46;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-}
-.kittypad-card.active .btn-circle { background: #2e1065; border-color: #5b21b6; }
-.dpad-grid { display: grid; grid-template-columns: repeat(3, 28px); grid-template-rows: repeat(3, 28px); gap: 2px; }
-
-/* Transitions */
-.fade-enter-active, .fade-leave-active { transition: opacity 0.5s ease; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
-
-.slide-up-enter-active, .slide-up-leave-active { transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
-.slide-up-enter-from, .slide-up-leave-to { transform: translateY(100%); opacity: 0; }
-
-.list-enter-active,
-.list-leave-active {
-  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.list-enter-from {
-  opacity: 0;
-  transform: translateY(30px) scale(0.9);
-}
-
-.list-leave-to {
-  opacity: 0;
-  transform: scale(0.8);
-}
+/* CSS 已提取到 src/assets/fui-cockpit.css */
 </style>

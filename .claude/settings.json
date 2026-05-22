@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build)",
+      "WebSearch",
+      "WebFetch(domain:www.jiejoe.com)",
+      "Bash(npm install @vueuse/motion)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(lsof -i :5173)",
+      "Bash(npm run lint)",
+      "Bash(grep -n \"cropper\\\\|hud-corner\\\\|fui-coord\" /Users/kaka/Documents/kaka_workspace/WEB/kittyhub/src/assets/*.css)"
+    ]
+  }
+}

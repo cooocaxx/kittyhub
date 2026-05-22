@@ -1,8 +1,28 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* ================= ASH THORP 风格 - 全局样式 ================= */
+/* CSS 变量定义在 fui-cockpit.css 中 */
 
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
+html, body {
+  background: #000000 !important;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  background: #000000;
+  min-height: 100vh;
+}
 
 /* 自定义动画和滚动条 */
 @keyframes bounceIn {
@@ -26,10 +46,10 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3f3f46;
-  border-radius: 3px;
+  background: rgba(0, 240, 255, 0.3);
+  border-radius: 0;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
+  background: rgba(0, 240, 255, 0.5);
 }
